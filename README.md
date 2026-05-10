@@ -5,11 +5,13 @@ Terminal Activity Monitor for macOS. One-shot snapshot of CPU, memory, and energ
 ```
 Activity Monitor — 21:24:51
 
-  Load       2.62, 3.44, 1.96
-  CPU        13.27% user, 13.55% sys, 73.16% idle
-  Memory     17G used · 177M free  ·  18.0 GB total
-  Swap       1.6 / 3.0 GB used
-  Hardware   Mac15,6 · 12 cores  ·  Uptime 4:58
+  Load     1m  2.62   ▕████░░░░░░░░░░░░░░░░▏  21%
+           5m  3.44   ▕█████░░░░░░░░░░░░░░░▏  28%
+           15m 1.96   ▕███░░░░░░░░░░░░░░░░░▏  16%
+  CPU      ▕█████▒▒▒▒▒░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▏  user 13.27% · sys 13.55% · idle 73.16%
+  Memory   ▕███████████████████████▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒░░▏  app 10G · wired 3G · compressed 4G · free 1G  /  18G
+  Swap     ▕█████████████████████░░░░░░░░░░░░░░░░░░░▏  1.6 / 3.0 GB (53%)
+  Hardware Mac15,6 · 12 cores · Uptime 4:58
 
 TOP CPU
   25093    Chrome Helper (GPU)        24.4%  ████████████████████
