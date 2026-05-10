@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+#
+# actmon — terminal Activity Monitor for macOS
+# https://github.com/kejerial/actmon
+#
+set -euo pipefail
+
+VERSION="0.1.0"
+TOP_N=10
+SHOW_CPU=0
+SHOW_MEM=0
+SHOW_ENERGY=0
+EXPLICIT_METRIC=0  # set when any --cpu/--memory/--energy flag is used
+
+usage() {
+  cat <<'EOF'
+actmon — terminal Activity Monitor for macOS
+
+USAGE
+  actmon [options]
+
+OPTIONS
+  -n, --top N        number of processes per section (default: 10)
+  -c, --cpu          show only the CPU section
+  -m, --memory       show only the memory section
+  -e, --energy       show only the energy section
+  -h, --help         show this help
+
+EXAMPLES
+  actmon                       full dashboard, top 10 each
+  actmon --top 5               top 5 per section
+  actmon --memory              only memory section
+  actmon --cpu --energy        CPU + energy (no memory)
+
+NOTES
+  • Multiple metric flags can be combined.
+  • The system summary header is always shown.
+  • macOS only (uses BSD `top -stats`).
+EOF
+}
+
+die() {
+  echo "actmon: $*" >&2
+  echo "       try 'actmon --help'" >&2
+  exit 2
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n|--top)
+      [[ $# -ge 2 ]] || die "$1 requires a number"
+      [[ "$2" =~ ^[1-9][0-9]*$ ]] || die "$1 must be a positive integer (got: $2)"
+      TOP_N="$2"
+      shift 2
+      ;;
+    -c|--cpu)
+      SHOW_CPU=1
+      EXPLICIT_METRIC=1
+      shift
+      ;;
+    -m|--memory|--mem)
+      SHOW_MEM=1
+      EXPLICIT_METRIC=1
+      shift
+      ;;
+    -e|--energy|--power)
+      SHOW_ENERGY=1
+      EXPLICIT_METRIC=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -V|--version)
+      echo "actmon ${VERSION}"
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+if [[ $EXPLICIT_METRIC -eq 0 ]]; then
+  SHOW_CPU=1
+  SHOW_MEM=1
+  SHOW_ENERGY=1
+fi
+
+# TODO(commits 3-7): system header + per-metric sections
+printf 'actmon %s — top=%d cpu=%d mem=%d energy=%d\n' \
+  "$VERSION" "$TOP_N" "$SHOW_CPU" "$SHOW_MEM" "$SHOW_ENERGY"
