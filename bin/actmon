@@ -93,6 +93,11 @@ build_section() {
         cpu_str = trim(substr($0, cpu_p, mem_p - cpu_p))
         mem_str = trim(substr($0, mem_p, pwr_p - mem_p))
         pwr_str = trim(substr($0, pwr_p))
+        # top -l 2 appends [+-] when a value changed since the prior sample;
+        # strip it for clean column alignment and unit parsing.
+        sub(/[+-]$/, "", cpu_str)
+        sub(/[+-]$/, "", mem_str)
+        sub(/[+-]$/, "", pwr_str)
 
         if (vcol == "%CPU") {
           val_num  = cpu_str + 0
@@ -200,8 +205,9 @@ fi
 
 build_header
 
-build_section "TOP CPU" cpu "%CPU" "$TOP_N"
+build_section "TOP CPU"    cpu "%CPU" "$TOP_N"
+build_section "TOP MEMORY" mem "MEM"  "$TOP_N"
 
-# TODO(commits 5-7): memory + energy sections, gated by metric flags
-[[ $SHOW_MEM -eq 1 || $SHOW_ENERGY -eq 1 ]] && \
-  printf '  (memory + energy sections coming next)\n\n'
+# TODO(commits 6-7): energy section + flag gating
+[[ $SHOW_ENERGY -eq 1 ]] && \
+  printf '  (energy section coming next)\n\n'
