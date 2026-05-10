@@ -45,6 +45,80 @@ die() {
   exit 2
 }
 
+build_section() {
+  local title="$1" sort="$2" val_col="$3" n="$4"
+
+  printf '%s\n' "$title"
+
+  # -l 2: two samples so CPU% is a meaningful delta (single sample reports
+  # 0.0 for everything since there's no prior to diff against). -s 1 = 1s
+  # between samples (top requires an integer here).
+  top -l 2 -s 1 -n "$n" -o "$sort" -stats pid,command,cpu,mem,power 2>/dev/null \
+    | awk 'BEGIN { sample = 0 }
+           /^Processes:/ { sample++ }
+           sample == 2' \
+    | awk -v vcol="$val_col" -v width=20 '
+      function make_bar(len,    s, i) {
+        s = ""
+        for (i = 1; i <= width; i++) s = s (i <= len ? "█" : "░")
+        return s
+      }
+      function mem_to_mb(s,    n) {
+        n = s + 0
+        if (s ~ /K$/) return n / 1024
+        if (s ~ /G$/) return n * 1024
+        if (s ~ /T$/) return n * 1024 * 1024
+        return n
+      }
+      function trim(s) {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+        return s
+      }
+
+      BEGIN { row = 0; in_data = 0 }
+
+      /^PID/ && /COMMAND/ {
+        pid_p = index($0, "PID")
+        cmd_p = index($0, "COMMAND")
+        cpu_p = index($0, "%CPU")
+        mem_p = index($0, "MEM")
+        pwr_p = index($0, "POWER")
+        in_data = 1
+        next
+      }
+
+      in_data && pid_p {
+        pid     = trim(substr($0, pid_p, cmd_p - pid_p))
+        cmd     = trim(substr($0, cmd_p, cpu_p - cmd_p))
+        cpu_str = trim(substr($0, cpu_p, mem_p - cpu_p))
+        mem_str = trim(substr($0, mem_p, pwr_p - mem_p))
+        pwr_str = trim(substr($0, pwr_p))
+
+        if (vcol == "%CPU") {
+          val_num  = cpu_str + 0
+          val_disp = sprintf("%5.1f%%", val_num)
+        } else if (vcol == "MEM") {
+          val_num  = mem_to_mb(mem_str)
+          val_disp = sprintf("%6s", mem_str)
+        } else {
+          val_num  = pwr_str + 0
+          val_disp = sprintf("%6.1f", val_num)
+        }
+
+        row++
+        if (row == 1) max_val = (val_num > 0 ? val_num : 1)
+        bar_cells = int(val_num / max_val * width)
+        if (bar_cells > width) bar_cells = width
+        if (bar_cells < 0)     bar_cells = 0
+
+        if (length(cmd) > 24) cmd = substr(cmd, 1, 23) "…"
+
+        printf "  %-7s  %-24s  %s  %s\n", pid, cmd, val_disp, make_bar(bar_cells)
+      }
+    '
+  printf '\n'
+}
+
 build_header() {
   local now top_h load cpu mem mem_used mem_unused
   local hw_model hw_ncpu hw_total_gb
@@ -126,6 +200,8 @@ fi
 
 build_header
 
-# TODO(commits 4-7): per-metric sections
-printf '  (sections coming next: cpu=%d mem=%d energy=%d, top=%d)\n\n' \
-  "$SHOW_CPU" "$SHOW_MEM" "$SHOW_ENERGY" "$TOP_N"
+build_section "TOP CPU" cpu "%CPU" "$TOP_N"
+
+# TODO(commits 5-7): memory + energy sections, gated by metric flags
+[[ $SHOW_MEM -eq 1 || $SHOW_ENERGY -eq 1 ]] && \
+  printf '  (memory + energy sections coming next)\n\n'
