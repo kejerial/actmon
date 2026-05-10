@@ -45,6 +45,42 @@ die() {
   exit 2
 }
 
+build_header() {
+  local now top_h load cpu mem mem_used mem_unused
+  local hw_model hw_ncpu hw_total_gb
+  local swap_total swap_used up
+
+  now=$(date '+%H:%M:%S')
+  top_h=$(top -l 1 -n 0 2>/dev/null)
+
+  load=$(awk -F': ' '/^Load Avg:/ { sub(/[[:space:]]+$/,"",$2); print $2 }' <<<"$top_h")
+  cpu=$(awk -F': ' '/^CPU usage:/ { sub(/[[:space:]]+$/,"",$2); print $2 }' <<<"$top_h")
+  mem=$(awk -F': ' '/^PhysMem:/ { sub(/[[:space:]]+$/,"",$2); print $2 }' <<<"$top_h")
+  mem_used=$(awk '{print $1}' <<<"$mem")
+  mem_unused=$(sed -E 's/.*, ([0-9]+[MG]) unused\..*/\1/' <<<"$mem")
+
+  hw_model=$(sysctl -n hw.model)
+  hw_ncpu=$(sysctl -n hw.ncpu)
+  hw_total_gb=$(awk -v b="$(sysctl -n hw.memsize)" 'BEGIN { printf "%.1f", b/1073741824 }')
+
+  swap_total=$(sysctl -n vm.swapusage 2>/dev/null | awk '{ gsub(/M/,"",$3); printf "%.1f", $3/1024 }')
+  swap_used=$(sysctl -n vm.swapusage 2>/dev/null | awk '{ gsub(/M/,"",$6); printf "%.1f", $6/1024 }')
+  swap_total=${swap_total:-0.0}
+  swap_used=${swap_used:-0.0}
+
+  up=$(uptime | awk -F'up ' '{split($2,a,","); print a[1]}' | sed 's/^ *//; s/ *$//')
+
+  printf '\n'
+  printf 'Activity Monitor — %s\n' "$now"
+  printf '\n'
+  printf '  Load       %s\n' "$load"
+  printf '  CPU        %s\n' "$cpu"
+  printf '  Memory     %s used · %s free  ·  %s GB total\n' "$mem_used" "$mem_unused" "$hw_total_gb"
+  printf '  Swap       %s / %s GB used\n' "$swap_used" "$swap_total"
+  printf '  Hardware   %s · %s cores  ·  Uptime %s\n' "$hw_model" "$hw_ncpu" "$up"
+  printf '\n'
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -n|--top)
@@ -88,6 +124,8 @@ if [[ $EXPLICIT_METRIC -eq 0 ]]; then
   SHOW_ENERGY=1
 fi
 
-# TODO(commits 3-7): system header + per-metric sections
-printf 'actmon %s — top=%d cpu=%d mem=%d energy=%d\n' \
-  "$VERSION" "$TOP_N" "$SHOW_CPU" "$SHOW_MEM" "$SHOW_ENERGY"
+build_header
+
+# TODO(commits 4-7): per-metric sections
+printf '  (sections coming next: cpu=%d mem=%d energy=%d, top=%d)\n\n' \
+  "$SHOW_CPU" "$SHOW_MEM" "$SHOW_ENERGY" "$TOP_N"
