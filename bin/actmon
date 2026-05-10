@@ -205,6 +205,7 @@ fi
 
 build_header
 
-build_section "TOP CPU"    cpu   "%CPU"  "$TOP_N"
-build_section "TOP MEMORY" mem   "MEM"   "$TOP_N"
-build_section "TOP ENERGY" power "POWER" "$TOP_N"
+[[ $SHOW_CPU    -eq 1 ]] && build_section "TOP CPU"    cpu   "%CPU"  "$TOP_N"
+[[ $SHOW_MEM    -eq 1 ]] && build_section "TOP MEMORY" mem   "MEM"   "$TOP_N"
+[[ $SHOW_ENERGY -eq 1 ]] && build_section "TOP ENERGY" power "POWER" "$TOP_N"
+true  # ensure final exit code is 0 even if last section was disabled
