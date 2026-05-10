@@ -205,9 +205,6 @@ fi
 
 build_header
 
-build_section "TOP CPU"    cpu "%CPU" "$TOP_N"
-build_section "TOP MEMORY" mem "MEM"  "$TOP_N"
-
-# TODO(commits 6-7): energy section + flag gating
-[[ $SHOW_ENERGY -eq 1 ]] && \
-  printf '  (energy section coming next)\n\n'
+build_section "TOP CPU"    cpu   "%CPU"  "$TOP_N"
+build_section "TOP MEMORY" mem   "MEM"   "$TOP_N"
+build_section "TOP ENERGY" power "POWER" "$TOP_N"
