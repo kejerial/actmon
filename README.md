@@ -72,15 +72,23 @@ Metric flags are additive. With no flag, all three sections are shown. The syste
 
 ## In Claude Code
 
-After `install.sh`, type `/actmon` in any Claude Code session. The slash command is a thin wrapper around the CLI, so flags pass through:
+After `install.sh` there are two ways to run it inside Claude Code, and they're meant for different things:
+
+|   | What happens | Token cost | Best for |
+|---|---|---|---|
+| `!actmon` | Claude Code's `!` prefix runs the command directly in your shell. Output appears in the chat. Claude isn't invoked. | 0 | **The primary use case** — you just want to glance at the dashboard. |
+| `/actmon` | Loads the slash command, which has Claude run the CLI via its Bash tool. Output is shown, and Claude has it in context. | small | Follow-up questions: *"what's eating my CPU?"*, *"is process 671 Chrome?"*, *"should I kill the top one?"* |
+
+Rule of thumb: **`!actmon` for monitoring, `/actmon` for asking about what you see.**
+
+Flags work identically in both — anything after the command name passes straight through to the CLI:
 
 ```
-/actmon
-/actmon --memory --top 5
-/actmon --cpu --energy
+!actmon --memory --top 5
+/actmon --cpu --energy --top 3
 ```
 
-Output is shown verbatim — Claude doesn't reformat it, so each call costs near-zero tokens.
+The slash command is intentionally a one-liner that runs `~/.claude/scripts/actmon $ARGUMENTS` and displays the output verbatim — Claude doesn't reformat it, so the slash-command overhead is small even when you do use it.
 
 ## Requirements
 
