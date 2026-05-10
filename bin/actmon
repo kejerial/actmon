@@ -141,6 +141,25 @@ human_mb() {
   }'
 }
 
+get_cols() {
+  local c=""
+  c=$(tput cols 2>/dev/null) || c=""
+  c=${c:-${COLUMNS:-100}}
+  [[ "$c" =~ ^[0-9]+$ ]] || c=100
+  if (( c < 50 )); then c=50; fi
+  echo "$c"
+}
+
+# visible width of an annotation string — treats common multi-byte glyphs
+# (·, —) as one column so we don't over-shrink the bar
+vis_len() {
+  awk -v s="$1" 'BEGIN {
+    gsub(/·/, ".", s)
+    gsub(/—/, "-", s)
+    print length(s)
+  }'
+}
+
 # make_bar WIDTH DENOM PAIR1 [PAIR2 ...]
 # Each PAIR is "value:glyph". Cells per pair = round(value/denom*width).
 # Overflow is clamped, leftover is padded with ░. Output: ▕…▏ (no newline).
@@ -186,7 +205,9 @@ build_header() {
   local hw_model hw_ncpu hw_total_gb hw_memsize
   local swap_total_gb swap_used_gb swap_pct swap_bar swap_pct_str
   local up
-  local cpu_w=40 mem_w=40 swap_w=40 load_w=20
+  local cpu_annot mem_annot swap_annot
+  local term_w big_annot_w cpu_annot_w
+  local cpu_w mem_w swap_w load_w
 
   now=$(date '+%H:%M:%S')
   top_h=$(top -l 1 -n 0 2>/dev/null)
@@ -225,6 +246,37 @@ build_header() {
 
   up=$(uptime | awk -F'up ' '{split($2,a,","); print a[1]}' | sed 's/^ *//; s/ *$//')
 
+  cpu_annot=$(printf 'user %s%% · sys %s%% · idle %s%%' "$cpu_user" "$cpu_sys" "$cpu_idle")
+  mem_annot=$(printf 'app %s · wired %s · compressed %s · free %s  /  %s' \
+    "$(human_mb "$mem_app_mb")"   "$(human_mb "$mem_wired_mb")" \
+    "$(human_mb "$mem_comp_mb")"  "$(human_mb "$mem_free_mb")" \
+    "$(human_mb "$mem_total_mb")")
+
+  if awk -v t="$swap_total_gb" 'BEGIN { exit (t > 0 ? 0 : 1) }'; then
+    swap_pct=$(awk -v u="$swap_used_gb" -v t="$swap_total_gb" 'BEGIN { printf "%d", u/t*100 }')
+    swap_pct_str="${swap_pct}%"
+  else
+    swap_pct_str="disabled"
+  fi
+  swap_annot=$(printf '%s / %s GB (%s)' "$swap_used_gb" "$swap_total_gb" "$swap_pct_str")
+
+  # Sizing: header rows render as "  %-8s %s  %s" → fixed 15 chars + bar(W+2) + annot.
+  # Pin bar width to fit the longest annotation (Memory in practice). Cap [10, 40].
+  term_w=$(get_cols)
+  big_annot_w=$(vis_len "$mem_annot")
+  cpu_annot_w=$(vis_len "$cpu_annot")
+  if (( cpu_annot_w > big_annot_w )); then big_annot_w=$cpu_annot_w; fi
+  cpu_w=$(( term_w - 15 - big_annot_w ))
+  if (( cpu_w < 10 )); then cpu_w=10; fi
+  if (( cpu_w > 40 )); then cpu_w=40; fi
+  mem_w=$cpu_w
+  swap_w=$cpu_w
+
+  # Load row layout: "  %-8s %-3s %-7s%s  %s" → 26 chars + bar(W+2) + annot (max "saturated"=9).
+  load_w=$(( term_w - 26 - 9 ))
+  if (( load_w < 5 )); then load_w=5; fi
+  if (( load_w > 20 )); then load_w=20; fi
+
   printf '\n'
   printf 'Activity Monitor — %s\n\n' "$now"
 
@@ -233,27 +285,18 @@ build_header() {
   build_load_row ""     "15m" "$load15" "$hw_ncpu" "$load_w"
 
   cpu_bar=$(make_bar "$cpu_w" 100 "${cpu_user}:█" "${cpu_sys}:▒")
-  printf '  %-8s %s  user %s%% · sys %s%% · idle %s%%\n' \
-    "CPU" "$cpu_bar" "$cpu_user" "$cpu_sys" "$cpu_idle"
+  printf '  %-8s %s  %s\n' "CPU" "$cpu_bar" "$cpu_annot"
 
   mem_bar=$(make_bar "$mem_w" "$mem_total_mb" \
     "${mem_app_mb}:█" "${mem_wired_mb}:▓" "${mem_comp_mb}:▒")
-  printf '  %-8s %s  app %s · wired %s · compressed %s · free %s  /  %s\n' \
-    "Memory" "$mem_bar" \
-    "$(human_mb "$mem_app_mb")"   "$(human_mb "$mem_wired_mb")" \
-    "$(human_mb "$mem_comp_mb")"  "$(human_mb "$mem_free_mb")" \
-    "$(human_mb "$mem_total_mb")"
+  printf '  %-8s %s  %s\n' "Memory" "$mem_bar" "$mem_annot"
 
   if awk -v t="$swap_total_gb" 'BEGIN { exit (t > 0 ? 0 : 1) }'; then
     swap_bar=$(make_bar "$swap_w" "$swap_total_gb" "${swap_used_gb}:█")
-    swap_pct=$(awk -v u="$swap_used_gb" -v t="$swap_total_gb" 'BEGIN { printf "%d", u/t*100 }')
-    swap_pct_str="${swap_pct}%"
   else
     swap_bar=$(make_bar "$swap_w" 1 "0:█")
-    swap_pct_str="disabled"
   fi
-  printf '  %-8s %s  %s / %s GB (%s)\n' \
-    "Swap" "$swap_bar" "$swap_used_gb" "$swap_total_gb" "$swap_pct_str"
+  printf '  %-8s %s  %s\n' "Swap" "$swap_bar" "$swap_annot"
 
   printf '  %-8s %s · %s cores · Uptime %s\n' "Hardware" "$hw_model" "$hw_ncpu" "$up"
   printf '\n'
