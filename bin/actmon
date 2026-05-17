@@ -45,6 +45,54 @@ die() {
   exit 2
 }
 
+# Emit "<pid>\t<name>" for every process. We derive <name> ourselves rather
+# than trusting `top -stats command`, which for some binaries (notably
+# versioned launchers like Claude Code's `versions/2.1.139` shim) reports
+# the trailing path segment — which can be a version string with no letters.
+# That defeats the whole point of "what is eating my CPU".
+#
+# Heuristic: take basename of `ps comm` (full exe path on macOS). If it has
+# no letters (pure digits/dots), walk up parent segments looking for the
+# first segment that has letters and isn't a generic container directory
+# (versions, MacOS, Contents, etc.). For .app bundles strip the suffix.
+build_pid_name_map() {
+  /bin/ps -axwwo pid=,comm= 2>/dev/null | awk '
+    function is_bogus(s) {
+      return s !~ /[A-Za-z]/
+    }
+    function is_generic(s) {
+      return s == "versions" || s == "Versions" || s == "MacOS"     \
+          || s == "Contents" || s == "Resources" || s == "Helpers"  \
+          || s == "Frameworks" || s == "Library" || s == "bin"      \
+          || s == "sbin" || s == "libexec" || s == "current"        \
+          || s == "latest"
+    }
+    function strip_app(s) {
+      sub(/\.app$/, "", s)
+      return s
+    }
+    {
+      pid = $1
+      sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "", $0)
+      path = $0
+      n = split(path, parts, "/")
+      name = strip_app(parts[n])
+      if (is_bogus(name)) {
+        for (i = n - 1; i >= 1; i--) {
+          cand = strip_app(parts[i])
+          if (cand == "") continue
+          if (is_bogus(cand)) continue
+          if (is_generic(cand)) continue
+          name = cand
+          break
+        }
+      }
+      if (name == "") name = parts[n]
+      printf "%s\t%s\n", pid, name
+    }
+  '
+}
+
 # Capture one `top -l 2 -s 1` snapshot (all processes, second sample only) into
 # the global TOP_SNAPSHOT. Two samples are needed so CPU% is a meaningful delta
 # (single sample reports 0.0 for everything since there's no prior to diff
@@ -60,12 +108,12 @@ capture_top_snapshot() {
 }
 
 build_section() {
-  local title="$1" val_col="$2" n="$3"
+  local title="$1" val_col="$2" n="$3" pid_map="$4"
 
   printf '%s\n' "$title"
 
   printf '%s\n' "$TOP_SNAPSHOT" \
-    | awk -v vcol="$val_col" -v topn="$n" -v width=20 '
+    | awk -v vcol="$val_col" -v topn="$n" -v width=20 -v pid_map="$pid_map" '
       function make_bar(len,    s, i) {
         s = ""
         for (i = 1; i <= width; i++) s = s (i <= len ? "█" : "░")
@@ -83,7 +131,20 @@ build_section() {
         return s
       }
 
-      BEGIN { nrows = 0; in_data = 0 }
+      BEGIN {
+        nrows = 0; in_data = 0
+        if (pid_map != "") {
+          while ((getline line < pid_map) > 0) {
+            tab = index(line, "\t")
+            if (tab > 0) {
+              p = substr(line, 1, tab - 1)
+              nm = substr(line, tab + 1)
+              pid_name[p] = nm
+            }
+          }
+          close(pid_map)
+        }
+      }
 
       /^PID/ && /COMMAND/ {
         pid_p = index($0, "PID")
@@ -98,6 +159,7 @@ build_section() {
       in_data && pid_p {
         pid     = trim(substr($0, pid_p, cmd_p - pid_p))
         cmd     = trim(substr($0, cmd_p, cpu_p - cmd_p))
+        if (pid in pid_name) cmd = pid_name[pid]
         cpu_str = trim(substr($0, cpu_p, mem_p - cpu_p))
         mem_str = trim(substr($0, mem_p, pwr_p - mem_p))
         pwr_str = trim(substr($0, pwr_p))
@@ -381,9 +443,12 @@ build_header
 
 if (( SHOW_CPU || SHOW_MEM || SHOW_ENERGY )); then
   capture_top_snapshot
+  PID_MAP=$(mktemp -t actmon.pidmap.XXXXXX)
+  trap 'rm -f "$PID_MAP"' EXIT
+  build_pid_name_map > "$PID_MAP"
 fi
 
-[[ $SHOW_CPU    -eq 1 ]] && build_section "TOP CPU"    "%CPU"  "$TOP_N"
-[[ $SHOW_MEM    -eq 1 ]] && build_section "TOP MEMORY" "MEM"   "$TOP_N"
-[[ $SHOW_ENERGY -eq 1 ]] && build_section "TOP ENERGY" "POWER" "$TOP_N"
+[[ $SHOW_CPU    -eq 1 ]] && build_section "TOP CPU"    "%CPU"  "$TOP_N" "${PID_MAP:-}"
+[[ $SHOW_MEM    -eq 1 ]] && build_section "TOP MEMORY" "MEM"   "$TOP_N" "${PID_MAP:-}"
+[[ $SHOW_ENERGY -eq 1 ]] && build_section "TOP ENERGY" "POWER" "$TOP_N" "${PID_MAP:-}"
 true  # ensure final exit code is 0 even if last section was disabled
