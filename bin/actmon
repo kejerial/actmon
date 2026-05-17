@@ -12,6 +12,11 @@ SHOW_MEM=0
 SHOW_ENERGY=0
 EXPLICIT_METRIC=0  # set when any --cpu/--memory/--energy flag is used
 NO_COLOR_FLAG=0    # set by --no-color
+FILTER=""          # case-insensitive regex on command name; empty = no filter
+THRESHOLD=""       # broadcast minimum; per-section flags override (empty = none)
+CPU_MIN=""         # minimum %CPU to display (empty = inherit THRESHOLD)
+MEM_MIN=""         # minimum MB to display (empty = inherit THRESHOLD)
+ENERGY_MIN=""      # minimum raw power value to display (empty = inherit THRESHOLD)
 
 # Alert thresholds. Calm machines render with no color; only stressed rows
 # light up. Red = critical, yellow = warming, otherwise default.
@@ -41,18 +46,31 @@ OPTIONS
   -c, --cpu          show only the CPU section
   -m, --memory       show only the memory section
   -e, --energy       show only the energy section
+  -f, --filter PAT   case-insensitive regex on command name; only matching rows show
+  -t, --threshold N  hide rows below N in every section
+                       CPU: N is %CPU · MEMORY: N is MB · ENERGY: N is raw power
+  --cpu-min N        hide CPU rows below N %CPU
+  --mem-min N        hide MEMORY rows below N MB
+  --energy-min N     hide ENERGY rows below N raw power
       --no-color     disable ANSI color (also auto-disabled when stdout is
                      not a TTY or NO_COLOR is set in the environment)
   -h, --help         show this help
 
 EXAMPLES
-  actmon                       full dashboard, top 10 each
-  actmon --top 5               top 5 per section
-  actmon --memory              only memory section
-  actmon --cpu --energy        CPU + energy (no memory)
+  actmon                              full dashboard, top 10 each
+  actmon --top 5                      top 5 per section
+  actmon --memory                     only memory section
+  actmon --cpu --energy               CPU + energy (no memory)
+  actmon --filter 'chrome|safari'     only browser processes
+  actmon --filter '^WindowServer$'    exact-match a single process
+  actmon --cpu --threshold 5          CPU section, hide anything under 5%
+  actmon --mem-min 500                hide memory rows under 500 MB
+  actmon --filter chrome --top 5      top 5 chrome-ish rows per section
 
 NOTES
   • Multiple metric flags can be combined.
+  • --filter + --threshold/--*-min are applied before --top.
+  • --threshold broadcasts to all sections; per-section flags override it.
   • The system summary header is always shown.
   • macOS only (uses BSD `top -stats`).
 EOF
@@ -152,12 +170,13 @@ capture_top_snapshot() {
 }
 
 build_section() {
-  local title="$1" val_col="$2" n="$3" pid_map="$4"
+  local title="$1" val_col="$2" n="$3" pid_map="$4" filter="$5" min_val="$6"
 
   printf '%s\n' "$title"
 
   printf '%s\n' "$TOP_SNAPSHOT" \
     | awk -v vcol="$val_col" -v topn="$n" -v width=20 -v pid_map="$pid_map" \
+          -v filter="$filter" -v min_val="$min_val" \
           -v cpu_red="$THRESH_PROC_CPU_RED" -v cpu_yel="$THRESH_PROC_CPU_YEL" \
           -v c_red="$C_RED" -v c_yel="$C_YEL" -v c_rst="$C_RST" '
       function make_bar(len,    s, i) {
@@ -232,6 +251,12 @@ build_section() {
           val_num  = pwr_str + 0
           val_disp = sprintf("%6.1f", val_num)
         }
+
+        # Apply --filter and --threshold before scoring/sorting. Filter is
+        # case-insensitive regex on the (possibly ps-derived) command name;
+        # min_val is the numeric floor for the section'\''s primary metric.
+        if (filter != "" && tolower(cmd) !~ tolower(filter)) next
+        if (min_val != "" && val_num + 0 < min_val + 0) next
 
         if (length(cmd) > 24) cmd = substr(cmd, 1, 23) "…"
 
@@ -493,6 +518,11 @@ build_header() {
   printf '\n'
 }
 
+is_nonneg_number() {
+  # accept integers or decimals: 0, 5, 0.5, 12.34
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]]
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -n|--top)
@@ -520,6 +550,35 @@ while [[ $# -gt 0 ]]; do
       NO_COLOR_FLAG=1
       shift
       ;;
+    -f|--filter)
+      [[ $# -ge 2 ]] || die "$1 requires a pattern"
+      FILTER="$2"
+      shift 2
+      ;;
+    -t|--threshold)
+      [[ $# -ge 2 ]] || die "$1 requires a number"
+      is_nonneg_number "$2" || die "$1 must be a non-negative number (got: $2)"
+      THRESHOLD="$2"
+      shift 2
+      ;;
+    --cpu-min)
+      [[ $# -ge 2 ]] || die "$1 requires a number"
+      is_nonneg_number "$2" || die "$1 must be a non-negative number (got: $2)"
+      CPU_MIN="$2"
+      shift 2
+      ;;
+    --mem-min|--memory-min)
+      [[ $# -ge 2 ]] || die "$1 requires a number"
+      is_nonneg_number "$2" || die "$1 must be a non-negative number (got: $2)"
+      MEM_MIN="$2"
+      shift 2
+      ;;
+    --energy-min|--power-min)
+      [[ $# -ge 2 ]] || die "$1 requires a number"
+      is_nonneg_number "$2" || die "$1 must be a non-negative number (got: $2)"
+      ENERGY_MIN="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -544,6 +603,11 @@ init_colors
 
 build_header
 
+# Per-section minimums fall back to the broadcast --threshold if unset.
+[[ -z "$CPU_MIN"    ]] && CPU_MIN="$THRESHOLD"
+[[ -z "$MEM_MIN"    ]] && MEM_MIN="$THRESHOLD"
+[[ -z "$ENERGY_MIN" ]] && ENERGY_MIN="$THRESHOLD"
+
 if (( SHOW_CPU || SHOW_MEM || SHOW_ENERGY )); then
   capture_top_snapshot
   PID_MAP=$(mktemp -t actmon.pidmap.XXXXXX)
@@ -551,7 +615,7 @@ if (( SHOW_CPU || SHOW_MEM || SHOW_ENERGY )); then
   build_pid_name_map > "$PID_MAP"
 fi
 
-[[ $SHOW_CPU    -eq 1 ]] && build_section "TOP CPU"    "%CPU"  "$TOP_N" "${PID_MAP:-}"
-[[ $SHOW_MEM    -eq 1 ]] && build_section "TOP MEMORY" "MEM"   "$TOP_N" "${PID_MAP:-}"
-[[ $SHOW_ENERGY -eq 1 ]] && build_section "TOP ENERGY" "POWER" "$TOP_N" "${PID_MAP:-}"
+[[ $SHOW_CPU    -eq 1 ]] && build_section "TOP CPU"    "%CPU"  "$TOP_N" "${PID_MAP:-}" "$FILTER" "$CPU_MIN"
+[[ $SHOW_MEM    -eq 1 ]] && build_section "TOP MEMORY" "MEM"   "$TOP_N" "${PID_MAP:-}" "$FILTER" "$MEM_MIN"
+[[ $SHOW_ENERGY -eq 1 ]] && build_section "TOP ENERGY" "POWER" "$TOP_N" "${PID_MAP:-}" "$FILTER" "$ENERGY_MIN"
 true  # ensure final exit code is 0 even if last section was disabled

@@ -60,17 +60,24 @@ Uninstall with `./uninstall.sh` — only removes the symlinks `install.sh` creat
 ## Usage
 
 ```
-actmon                       full dashboard, top 10 per section
-actmon --top 5               top 5 per section
-actmon -n 5                  short form for --top
-actmon --cpu                 CPU section only
-actmon --memory              memory section only
-actmon --energy              energy section only
-actmon --cpu --energy        combine sections
-actmon --help                full usage
+actmon                              full dashboard, top 10 per section
+actmon --top 5                      top 5 per section
+actmon -n 5                         short form for --top
+actmon --cpu                        CPU section only
+actmon --memory                     memory section only
+actmon --energy                     energy section only
+actmon --cpu --energy               combine sections
+actmon --filter 'chrome|safari'     only browser-ish processes (case-insensitive regex)
+actmon --filter '^WindowServer$'    exact-match a single process
+actmon --cpu --threshold 5          CPU section, hide anything under 5%
+actmon --mem-min 500                hide memory rows under 500 MB
+actmon --filter chrome --top 5      top 5 chrome-ish rows per section
+actmon --help                       full usage
 ```
 
 Metric flags are additive. With no flag, all three sections are shown. The system summary header is always shown.
+
+`--filter` and `--threshold` (plus `--cpu-min` / `--mem-min` / `--energy-min`) apply before `--top`, so the top-N you see is the top-N of what survived filtering. `--threshold` broadcasts to all sections (its unit changes per section: %CPU, MB, raw power); the per-section flags override it.
 
 ## In Claude Code
 
