@@ -72,12 +72,24 @@ actmon --filter '^WindowServer$'    exact-match a single process
 actmon --cpu --threshold 5          CPU section, hide anything under 5%
 actmon --mem-min 500                hide memory rows under 500 MB
 actmon --filter chrome --top 5      top 5 chrome-ish rows per section
+actmon --json                       machine-readable JSON snapshot
 actmon --help                       full usage
 ```
 
 Metric flags are additive. With no flag, all three sections are shown. The system summary header is always shown.
 
 `--filter` and `--threshold` (plus `--cpu-min` / `--mem-min` / `--energy-min`) apply before `--top`, so the top-N you see is the top-N of what survived filtering. `--threshold` broadcasts to all sections (its unit changes per section: %CPU, MB, raw power); the per-section flags override it.
+
+### JSON output
+
+`--json` emits a single JSON object instead of the dashboard — useful for piping into `jq`, scripts, or LLMs that would rather not parse ASCII bars:
+
+```sh
+actmon --json | jq '.top_cpu[0]'
+actmon --json --memory --top 3 | jq '.top_memory[].command'
+```
+
+Header keys (`timestamp`, `host`, `load`, `cpu`, `memory`, `swap`) are always present. The `top_cpu` / `top_memory` / `top_energy` arrays are included only when their section is enabled, following the same `--cpu` / `--memory` / `--energy` rules as the dashboard.
 
 ## In Claude Code
 
