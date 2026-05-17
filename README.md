@@ -73,6 +73,7 @@ actmon --cpu --threshold 5          CPU section, hide anything under 5%
 actmon --mem-min 500                hide memory rows under 500 MB
 actmon --filter chrome --top 5      top 5 chrome-ish rows per section
 actmon --json                       machine-readable JSON snapshot
+actmon --no-color                   disable ANSI color (auto-disabled when piped)
 actmon --help                       full usage
 ```
 
@@ -90,6 +91,19 @@ actmon --json --memory --top 3 | jq '.top_memory[].command'
 ```
 
 Header keys (`timestamp`, `host`, `load`, `cpu`, `memory`, `swap`) are always present. The `top_cpu` / `top_memory` / `top_energy` arrays are included only when their section is enabled, following the same `--cpu` / `--memory` / `--energy` rules as the dashboard.
+
+### Highlighting
+
+When `actmon` is run in a terminal, stressed rows light up to draw the eye — calm machines render with no color at all. The current thresholds:
+
+- **Red** (critical): swap > 75%, load avg > `ncpu`, free memory < 5%, or any process > 50% CPU
+- **Yellow** (warning): swap > 50%, load avg > 0.75 × `ncpu`, free memory < 15%, or any process > 25% CPU
+
+Color is auto-disabled when stdout isn't a TTY (e.g. when piped), when `NO_COLOR` is set in the environment, or when `--no-color` is passed.
+
+### Process names
+
+Process names come from `ps` (full executable path) rather than `top -stats command`, which for some helper binaries reports just a version string (e.g. `2.1.139` for Claude Code's launcher shim). `actmon` walks up parent path segments, skipping generic containers like `Versions`/`MacOS`/`Contents`, until it finds a name with letters — so `claude` shows up instead of `2.1.139`.
 
 ## In Claude Code
 
@@ -123,12 +137,11 @@ Not in v0.1, contributions welcome:
 - `--watch` / auto-refresh (for now: `/loop 5s /actmon` in Claude Code)
 - Disk I/O + network per process (macOS makes per-process network attribution awkward)
 - Linux/BSD compat (`top -stats` is mac-only)
-- Color output / `--no-color`
 - Homebrew formula
 
 ## Contributing
 
-PRs and issues welcome. The whole tool is one Bash script (`bin/actmon`, ~160 lines) — easy to read, easy to change.
+PRs and issues welcome. The whole tool is one Bash script (`bin/actmon`, ~600 lines) — easy to read, easy to change.
 
 ## License
 
