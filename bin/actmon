@@ -338,11 +338,15 @@ get_cols() {
 }
 
 # visible width of an annotation string — treats common multi-byte glyphs
-# (·, —) as one column so we don't over-shrink the bar
+# (·, —, █, ▓, ▒, ░) as one column so we don't over-shrink the bar
 vis_len() {
   awk -v s="$1" 'BEGIN {
     gsub(/·/, ".", s)
     gsub(/—/, "-", s)
+    gsub(/█/, "#", s)
+    gsub(/▓/, "#", s)
+    gsub(/▒/, "#", s)
+    gsub(/░/, "#", s)
     print length(s)
   }'
 }
@@ -454,8 +458,8 @@ build_header() {
   local term_w big_annot_w cpu_annot_w
   local cpu_w mem_w swap_w load_w
 
-  cpu_annot=$(printf 'user %s%% · sys %s%% · idle %s%%' "$H_CPU_USER" "$H_CPU_SYS" "$H_CPU_IDLE")
-  mem_annot=$(printf 'app %s · wired %s · compressed %s · free %s  /  %s' \
+  cpu_annot=$(printf '█ user %s%% · ▒ sys %s%% · idle %s%%' "$H_CPU_USER" "$H_CPU_SYS" "$H_CPU_IDLE")
+  mem_annot=$(printf '█ app %s · ▓ wired %s · ▒ compressed %s · ░ free %s  /  %s' \
     "$(human_mb "$H_MEM_APP_MB")"   "$(human_mb "$H_MEM_WIRED_MB")" \
     "$(human_mb "$H_MEM_COMP_MB")"  "$(human_mb "$H_MEM_FREE_MB")" \
     "$(human_mb "$H_MEM_TOTAL_MB")")
