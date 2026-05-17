@@ -11,6 +11,23 @@ SHOW_CPU=0
 SHOW_MEM=0
 SHOW_ENERGY=0
 EXPLICIT_METRIC=0  # set when any --cpu/--memory/--energy flag is used
+NO_COLOR_FLAG=0    # set by --no-color
+
+# Alert thresholds. Calm machines render with no color; only stressed rows
+# light up. Red = critical, yellow = warming, otherwise default.
+THRESH_SWAP_RED=75       # swap % used
+THRESH_SWAP_YEL=50
+THRESH_LOAD_RED_MULT=1.0   # load avg vs hw.ncpu
+THRESH_LOAD_YEL_MULT=0.75
+THRESH_MEMFREE_RED_PCT=5   # free mem as % of total
+THRESH_MEMFREE_YEL_PCT=15
+THRESH_PROC_CPU_RED=50    # per-process %CPU
+THRESH_PROC_CPU_YEL=25
+
+# ANSI color codes — populated by init_colors based on TTY/NO_COLOR/--no-color.
+C_RED=""
+C_YEL=""
+C_RST=""
 
 usage() {
   cat <<'EOF'
@@ -24,6 +41,8 @@ OPTIONS
   -c, --cpu          show only the CPU section
   -m, --memory       show only the memory section
   -e, --energy       show only the energy section
+      --no-color     disable ANSI color (also auto-disabled when stdout is
+                     not a TTY or NO_COLOR is set in the environment)
   -h, --help         show this help
 
 EXAMPLES
@@ -43,6 +62,31 @@ die() {
   echo "actmon: $*" >&2
   echo "       try 'actmon --help'" >&2
   exit 2
+}
+
+# Decide whether to emit ANSI colors. Auto-disable when stdout isn't a TTY,
+# NO_COLOR is set (https://no-color.org), or --no-color was passed.
+init_colors() {
+  if [[ $NO_COLOR_FLAG -eq 1 ]] || [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; then
+    C_RED=""
+    C_YEL=""
+    C_RST=""
+  else
+    C_RED=$'\033[31m'
+    C_YEL=$'\033[33m'
+    C_RST=$'\033[0m'
+  fi
+}
+
+# Classify a numeric value against (red_threshold, yellow_threshold). Echoes
+# the ANSI escape (or empty string). Comparison is "value > threshold".
+color_for() {
+  local val="$1" red="$2" yel="$3"
+  awk -v v="$val" -v r="$red" -v y="$yel" \
+      -v cr="$C_RED" -v cy="$C_YEL" 'BEGIN {
+    if (v + 0 > r + 0)      printf "%s", cr
+    else if (v + 0 > y + 0) printf "%s", cy
+  }'
 }
 
 # Emit "<pid>\t<name>" for every process. We derive <name> ourselves rather
@@ -113,11 +157,20 @@ build_section() {
   printf '%s\n' "$title"
 
   printf '%s\n' "$TOP_SNAPSHOT" \
-    | awk -v vcol="$val_col" -v topn="$n" -v width=20 -v pid_map="$pid_map" '
+    | awk -v vcol="$val_col" -v topn="$n" -v width=20 -v pid_map="$pid_map" \
+          -v cpu_red="$THRESH_PROC_CPU_RED" -v cpu_yel="$THRESH_PROC_CPU_YEL" \
+          -v c_red="$C_RED" -v c_yel="$C_YEL" -v c_rst="$C_RST" '
       function make_bar(len,    s, i) {
         s = ""
         for (i = 1; i <= width; i++) s = s (i <= len ? "█" : "░")
         return s
+      }
+      # Color a process row only when its %CPU crosses a threshold. Memory
+      # and energy rows stay default — context, not alert.
+      function row_color(cpu_num) {
+        if (cpu_num + 0 > cpu_red + 0) return c_red
+        if (cpu_num + 0 > cpu_yel + 0) return c_yel
+        return ""
       }
       function mem_to_mb(s,    n) {
         n = s + 0
@@ -187,6 +240,7 @@ build_section() {
         v_disp[nrows] = val_disp
         v_pid[nrows]  = pid
         v_cmd[nrows]  = cmd
+        v_cpu[nrows]  = cpu_str + 0
       }
 
       END {
@@ -203,6 +257,7 @@ build_section() {
             td = v_disp[i]; v_disp[i] = v_disp[best]; v_disp[best] = td
             tp = v_pid[i];  v_pid[i]  = v_pid[best];  v_pid[best]  = tp
             tc = v_cmd[i];  v_cmd[i]  = v_cmd[best];  v_cmd[best]  = tc
+            tx = v_cpu[i];  v_cpu[i]  = v_cpu[best];  v_cpu[best]  = tx
           }
         }
 
@@ -211,7 +266,14 @@ build_section() {
           bar_cells = int(v_num[i] / max_val * width)
           if (bar_cells > width) bar_cells = width
           if (bar_cells < 0)     bar_cells = 0
-          printf "  %-7s  %-24s  %s  %s\n", v_pid[i], v_cmd[i], v_disp[i], make_bar(bar_cells)
+          rc = row_color(v_cpu[i])
+          bar = make_bar(bar_cells)
+          if (rc != "") {
+            printf "  %-7s  %-24s  %s%s%s  %s%s%s\n", \
+                   v_pid[i], v_cmd[i], rc, v_disp[i], c_rst, rc, bar, c_rst
+          } else {
+            printf "  %-7s  %-24s  %s  %s\n", v_pid[i], v_cmd[i], v_disp[i], bar
+          }
         }
       }
     '
@@ -280,14 +342,24 @@ make_bar() {
 
 build_load_row() {
   local label="$1" period="$2" loadv="$3" ncpu="$4" width="$5"
-  local bar pct_str
+  local bar pct_str red yel color
   bar=$(make_bar "$width" "$ncpu" "${loadv}:█")
   pct_str=$(awk -v l="$loadv" -v n="$ncpu" 'BEGIN {
     r = l / n
     if (r >= 1.0) print "saturated"
     else          printf "%d%%", r * 100
   }')
-  printf '  %-8s %-3s %-7s%s  %s\n' "$label" "$period" "$loadv" "$bar" "$pct_str"
+  red=$(awk -v n="$ncpu" -v m="$THRESH_LOAD_RED_MULT" 'BEGIN { printf "%.4f", n*m }')
+  yel=$(awk -v n="$ncpu" -v m="$THRESH_LOAD_YEL_MULT" 'BEGIN { printf "%.4f", n*m }')
+  color=$(color_for "$loadv" "$red" "$yel")
+  if [[ -n "$color" ]]; then
+    printf '  %-8s %-3s %s%-7s%s%s%s%s  %s%s%s\n' \
+      "$label" "$period" "$color" "$loadv" "$C_RST" \
+      "$color" "$bar" "$C_RST" \
+      "$color" "$pct_str" "$C_RST"
+  else
+    printf '  %-8s %-3s %-7s%s  %s\n' "$label" "$period" "$loadv" "$bar" "$pct_str"
+  fi
 }
 
 build_header() {
@@ -383,14 +455,39 @@ build_header() {
 
   mem_bar=$(make_bar "$mem_w" "$mem_total_mb" \
     "${mem_app_mb}:█" "${mem_wired_mb}:▓" "${mem_comp_mb}:▒")
-  printf '  %-8s %s  %s\n' "Memory" "$mem_bar" "$mem_annot"
+  # Memory alert is on *free* memory shrinking (inverse): low free → red.
+  # color_for() is "value > threshold", so invert by negating both sides.
+  local mem_free_pct mem_color
+  mem_free_pct=$(awk -v f="$mem_free_mb" -v t="$mem_total_mb" \
+    'BEGIN { if (t > 0) printf "%.2f", f/t*100; else print "100" }')
+  mem_color=$(awk -v p="$mem_free_pct" \
+    -v r="$THRESH_MEMFREE_RED_PCT" -v y="$THRESH_MEMFREE_YEL_PCT" \
+    -v cr="$C_RED" -v cy="$C_YEL" 'BEGIN {
+      if (p + 0 < r + 0)      printf "%s", cr
+      else if (p + 0 < y + 0) printf "%s", cy
+    }')
+  if [[ -n "$mem_color" ]]; then
+    printf '  %-8s %s%s%s  %s%s%s\n' "Memory" \
+      "$mem_color" "$mem_bar" "$C_RST" "$mem_color" "$mem_annot" "$C_RST"
+  else
+    printf '  %-8s %s  %s\n' "Memory" "$mem_bar" "$mem_annot"
+  fi
 
   if awk -v t="$swap_total_gb" 'BEGIN { exit (t > 0 ? 0 : 1) }'; then
     swap_bar=$(make_bar "$swap_w" "$swap_total_gb" "${swap_used_gb}:█")
   else
     swap_bar=$(make_bar "$swap_w" 1 "0:█")
   fi
-  printf '  %-8s %s  %s\n' "Swap" "$swap_bar" "$swap_annot"
+  local swap_color=""
+  if [[ "$swap_pct_str" != "disabled" ]]; then
+    swap_color=$(color_for "${swap_pct:-0}" "$THRESH_SWAP_RED" "$THRESH_SWAP_YEL")
+  fi
+  if [[ -n "$swap_color" ]]; then
+    printf '  %-8s %s%s%s  %s%s%s\n' "Swap" \
+      "$swap_color" "$swap_bar" "$C_RST" "$swap_color" "$swap_annot" "$C_RST"
+  else
+    printf '  %-8s %s  %s\n' "Swap" "$swap_bar" "$swap_annot"
+  fi
 
   printf '  %-8s %s · %s cores · Uptime %s\n' "Hardware" "$hw_model" "$hw_ncpu" "$up"
   printf '\n'
@@ -419,6 +516,10 @@ while [[ $# -gt 0 ]]; do
       EXPLICIT_METRIC=1
       shift
       ;;
+    --no-color|--no-colour)
+      NO_COLOR_FLAG=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -438,6 +539,8 @@ if [[ $EXPLICIT_METRIC -eq 0 ]]; then
   SHOW_MEM=1
   SHOW_ENERGY=1
 fi
+
+init_colors
 
 build_header
 
