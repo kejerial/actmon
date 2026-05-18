@@ -141,7 +141,7 @@ Not in v0.1, contributions welcome:
 
 ## Contributing
 
-PRs and issues welcome. The whole tool is one Bash script (`bin/actmon`, ~600 lines) — easy to read, easy to change.
+PRs and issues welcome. The whole tool is one Bash script (`bin/actmon`, ~830 lines) — easy to read, easy to change.
 
 ## License
 
